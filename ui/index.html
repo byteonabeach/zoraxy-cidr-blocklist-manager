@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data-Shield Blocklist</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f7fa;
+      color: #2d3748;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #718096; font-size: 0.875rem; margin-bottom: 2rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .card-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #a0aec0;
+      margin-bottom: 0.5rem;
+    }
+    .card-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .card-value.small { font-size: 1rem; margin-top: .25rem; }
+    .badge {
+      display: inline-block;
+      padding: .25em .75em;
+      border-radius: 9999px;
+      font-size: .8rem;
+      font-weight: 600;
+    }
+    .badge-ok  { background: #c6f6d5; color: #276749; }
+    .badge-err { background: #fed7d7; color: #9b2c2c; }
+    .badge-loading { background: #e2e8f0; color: #4a5568; }
+    button {
+      background: #3182ce;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: .6rem 1.25rem;
+      cursor: pointer;
+      font-size: .95rem;
+      transition: background .15s;
+    }
+    button:hover:not(:disabled) { background: #2b6cb0; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #msg { margin-top: .75rem; font-size: .875rem; color: #718096; min-height: 1.25em; }
+    .test-section {
+      background: white;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      margin-top: 1.5rem;
+    }
+    .test-section h2 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #a0aec0;
+      margin-bottom: 1rem;
+    }
+    .add-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    .add-row input {
+      flex: 1;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: .55rem .75rem;
+      font-size: .95rem;
+      outline: none;
+    }
+    .add-row input:focus { border-color: #3182ce; }
+    .ip-list { list-style: none; }
+    .ip-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .35rem 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-family: monospace;
+      font-size: .95rem;
+    }
+    .ip-list li:last-child { border-bottom: none; }
+    .btn-remove {
+      background: #fed7d7;
+      color: #9b2c2c;
+      padding: .25rem .7rem;
+      font-size: .8rem;
+    }
+    .btn-remove:hover:not(:disabled) { background: #feb2b2; }
+    .empty-note { color: #a0aec0; font-size: .875rem; }
+  </style>
+</head>
+<body>
+  <h1>Data-Shield Blocklist</h1>
+  <p class="subtitle">Critical IPv4 Blocklist &mdash; blocks malicious IPs, refreshed every 6 hours</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Status</div>
+      <div id="status-val"><span class="badge badge-loading">Loading…</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Blocked IPs in list</div>
+      <div class="card-value" id="ip-count">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Requests blocked</div>
+      <div class="card-value" id="blocked-count">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last updated</div>
+      <div class="card-value small" id="last-updated">—</div>
+    </div>
+  </div>
+
+  <button id="refresh-btn" onclick="forceRefresh()">Refresh Blocklist Now</button>
+  <div id="msg"></div>
+
+  <div class="test-section">
+    <h2>Manual test IPs</h2>
+    <div class="add-row">
+      <input type="text" id="ip-input" placeholder="1.2.3.4" />
+      <button onclick="addIP()">Add</button>
+    </div>
+    <ul class="ip-list" id="ip-list">
+      <li><span class="empty-note">No manual IPs added.</span></li>
+    </ul>
+  </div>
+
+  <script>
+    const csrfToken = '{{.csrfToken}}';
+
+    function fmt(n) {
+      return Number(n).toLocaleString();
+    }
+
+    function renderManualIPs(ips) {
+      const list = document.getElementById('ip-list');
+      if (!ips || ips.length === 0) {
+        list.innerHTML = '<li><span class="empty-note">No manual IPs added.</span></li>';
+        return;
+      }
+      ips.sort();
+      list.innerHTML = ips.map(ip =>
+        `<li><span>${ip}</span><button class="btn-remove" onclick="removeIP('${ip}')">Remove</button></li>`
+      ).join('');
+    }
+
+    function load() {
+      fetch('api/status')
+        .then(r => r.json())
+        .then(d => {
+          const el = document.getElementById('status-val');
+          if (d.loaded) {
+            el.innerHTML = '<span class="badge badge-ok">Active</span>';
+          } else {
+            el.innerHTML = '<span class="badge badge-err">Not loaded</span>';
+          }
+          document.getElementById('ip-count').textContent = fmt(d.ip_count);
+          document.getElementById('blocked-count').textContent = fmt(d.blocked_count);
+          const zero = '0001-01-01T00:00:00Z';
+          const upd = d.last_updated && d.last_updated !== zero
+            ? new Date(d.last_updated).toLocaleString()
+            : 'Never';
+          document.getElementById('last-updated').textContent = upd;
+          renderManualIPs(d.manual_ips);
+        })
+        .catch(() => {
+          document.getElementById('status-val').innerHTML =
+            '<span class="badge badge-err">Unreachable</span>';
+        });
+    }
+
+    function addIP() {
+      const input = document.getElementById('ip-input');
+      const ip = input.value.trim();
+      if (!ip) return;
+      fetch('api/add-ip?ip=' + encodeURIComponent(ip))
+        .then(r => {
+          if (!r.ok) return r.text().then(t => { throw new Error(t.trim()); });
+          return r.json();
+        })
+        .then(() => { input.value = ''; load(); })
+        .catch(e => {
+          document.getElementById('msg').textContent = 'Error: ' + e.message;
+          setTimeout(() => { document.getElementById('msg').textContent = ''; }, 4000);
+        });
+    }
+
+    function removeIP(ip) {
+      fetch('api/remove-ip?ip=' + encodeURIComponent(ip))
+        .then(r => { if (!r.ok) throw new Error(); })
+        .then(() => load())
+        .catch(() => {
+          document.getElementById('msg').textContent = 'Failed to remove IP.';
+          setTimeout(() => { document.getElementById('msg').textContent = ''; }, 4000);
+        });
+    }
+
+    function forceRefresh() {
+      const btn = document.getElementById('refresh-btn');
+      const msg = document.getElementById('msg');
+      btn.disabled = true;
+      msg.textContent = 'Refresh started…';
+      fetch('api/refresh', {
+        method: 'POST',
+        headers: { 'X-Zoraxy-Csrf': csrfToken }
+      })
+        .then(r => r.json())
+        .then(() => {
+          msg.textContent = 'Downloading blocklist — this may take a few seconds.';
+          setTimeout(() => {
+            load();
+            btn.disabled = false;
+            msg.textContent = '';
+          }, 6000);
+        })
+        .catch(() => {
+          msg.textContent = 'Request failed. Check plugin logs.';
+          btn.disabled = false;
+        });
+    }
+
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>
