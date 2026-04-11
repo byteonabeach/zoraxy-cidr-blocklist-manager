@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build binaries
+        run: |
+          PLUGIN="fr.madyanne.zoraxy.datashield-blocklist"
+          for TARGET in linux/amd64 linux/386 linux/arm linux/arm64 linux/mipsle linux/riscv64 windows/amd64; do
+            GOOS="${TARGET%/*}"
+            GOARCH="${TARGET#*/}"
+            OUTPUT="${PLUGIN}_${GOOS}_${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then OUTPUT="${OUTPUT}.exe"; fi
+            GOOS=$GOOS GOARCH=$GOARCH go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
+            echo "Built $OUTPUT"
+          done
+
+      - name: Create release and upload assets
+        env:
+          GITEA_TOKEN: ${{ secrets.REPO_GITEA_TOKEN }}
+          GITEA_API: https://gitea.zaclys.com/api/v1
+          REPO: yannic/zoraxy-datashield-blocklist
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Create the release
+          RELEASE=$(curl -sf -X POST "${GITEA_API}/repos/${REPO}/releases" \
+            -H "Authorization: token ${REPO_GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"draft\":false,\"prerelease\":false}")
+          RELEASE_ID=$(echo "$RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+          # Upload each binary
+          PLUGIN="fr.madyanne.zoraxy.datashield-blocklist"
+          for FILE in ${PLUGIN}_*; do
+            echo "Uploading $FILE ..."
+            curl -sf -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${FILE}" \
+              -H "Authorization: token ${REPO_GITEA_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$FILE"
+          done
