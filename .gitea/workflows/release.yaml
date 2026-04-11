@@ -36,7 +36,7 @@ jobs:
         run: |
           # Create the release
           RELEASE=$(curl -sf -X POST "${GITEA_API}/repos/${REPO}/releases" \
-            -H "Authorization: token ${REPO_GITEA_TOKEN}" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"draft\":false,\"prerelease\":false}")
           RELEASE_ID=$(echo "$RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
@@ -46,7 +46,7 @@ jobs:
           for FILE in ${PLUGIN}_*; do
             echo "Uploading $FILE ..."
             curl -sf -X POST "${GITEA_API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${FILE}" \
-              -H "Authorization: token ${REPO_GITEA_TOKEN}" \
+              -H "Authorization: token ${GITEA_TOKEN}" \
               -H "Content-Type: application/octet-stream" \
               --data-binary @"$FILE"
           done
