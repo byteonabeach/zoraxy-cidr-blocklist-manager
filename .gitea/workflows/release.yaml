@@ -30,8 +30,8 @@ jobs:
       - name: Create release and upload assets
         env:
           GITEA_TOKEN: ${{ secrets.REPO_GITEA_TOKEN }}
-          GITEA_API: https://gitea.zaclys.com/api/v1
-          REPO: yannic/zoraxy-datashield-blocklist
+          GITEA_API: https://source.madyanne.fr/api/v1
+          REPO: yax/zoraxy-datashield-blocklist
           TAG: ${{ github.ref_name }}
         run: |
           # Create the release
