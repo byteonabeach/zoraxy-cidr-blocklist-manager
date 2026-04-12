@@ -60,7 +60,7 @@ var pluginSpec = plugin.IntroSpect{
 	Author:        "Yax",
 	AuthorContact: "",
 	Description:   "Blocks incoming connections from IPs listed in the Data-Shield Critical IPv4 Blocklist (~100k IPs, updated every 6h).",
-	URL:           "https://source.madyanne.fr/yax/zoraxy-datashield-blocklist",
+	URL:           "https://github.com/kianby/zoraxy-datashield-blocklist",
 	Type:          plugin.PluginType_Router,
 	VersionMajor:  1,
 	VersionMinor:  0,

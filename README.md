@@ -21,7 +21,7 @@ A [Zoraxy](https://zoraxy.aroz.org/) plugin that blocks incoming connections fro
 ### From source
 
 ```bash
-git clone https://source.madyanne.fr/yax/zoraxy-datashield-blocklist
+git clone https://github.com/kianby/zoraxy-datashield-blocklist.git
 cd zoraxy-datashield-blocklist
 go build -o datashield-blocklist .
 ```
