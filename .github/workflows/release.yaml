@@ -19,7 +19,7 @@ jobs:
 
       - name: Build binaries
         run: |
-          PLUGIN="fr.madyanne.zoraxy.datashield-blocklist"
+          PLUGIN="datashield-blocklist"
           for TARGET in linux/amd64 linux/386 linux/arm linux/arm64 linux/mipsle linux/riscv64 windows/amd64; do
             GOOS="${TARGET%/*}"
             GOARCH="${TARGET#*/}"
@@ -32,4 +32,4 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: fr.madyanne.zoraxy.datashield-blocklist_*
+          files: datashield-blocklist_*
