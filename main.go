@@ -63,7 +63,7 @@ var pluginSpec = plugin.IntroSpect{
 	URL:           "https://github.com/kianby/zoraxy-datashield-blocklist",
 	Type:          plugin.PluginType_Router,
 	VersionMajor:  1,
-	VersionMinor:  0,
+	VersionMinor:  3,
 	VersionPatch:  0,
 	DynamicCaptureSniff:   "/sniff",
 	DynamicCaptureIngress: "/block",
