@@ -2,6 +2,8 @@
 
 A [Zoraxy](https://zoraxy.aroz.org/) plugin that blocks incoming connections from IPs listed in the [Data-Shield Critical IPv4 Blocklist](https://github.com/duggytuxy/Data-Shield_IPv4_Blocklist) — roughly 100,000 known-malicious IPv4 addresses, refreshed automatically every 6 hours.
 
+![Plugin UI screenshot](screenshot.png)
+
 ## Features
 
 - Blocks ~100k threat IPs from the Data-Shield Critical list with sub-millisecond overhead per request
