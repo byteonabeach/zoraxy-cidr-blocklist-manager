@@ -265,15 +265,63 @@ function showConfirm(title, message, onConfirm) {
   if (!modal) {
     modal = document.createElement("div");
     modal.id = "confirmModal";
-    modal.style.cssText =
-      "display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center";
+    modal.style.cssText = [
+      "display:none",
+      "position:fixed",
+      "inset:0",
+      "background:rgba(0,0,0,.55)",
+      "z-index:99999",
+      "align-items:center",
+      "justify-content:center",
+      "font-family:inherit",
+    ].join(";");
     modal.innerHTML = `
-      <div style="background:var(--bg-card,#1e1e2e);border:1px solid var(--border,#333);border-radius:10px;padding:1.5rem 1.75rem;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-        <div id="confirmTitle" style="font-size:1.05rem;font-weight:600;margin-bottom:.5rem"></div>
-        <div id="confirmMsg" style="font-size:.9rem;color:var(--text-muted,#aaa);margin-bottom:1.25rem"></div>
+      <div style="
+        background:#1a1d2e;
+        border:1px solid #2e3150;
+        border-radius:12px;
+        padding:1.6rem 1.8rem;
+        max-width:400px;
+        width:90%;
+        box-shadow:0 12px 40px rgba(0,0,0,.7);
+        box-sizing:border-box;
+      ">
+        <div id="confirmTitle" style="
+          font-size:1rem;
+          font-weight:700;
+          color:#f0f0f5;
+          margin-bottom:.5rem;
+          line-height:1.4;
+        "></div>
+        <div id="confirmMsg" style="
+          font-size:.875rem;
+          color:#9a9db8;
+          margin-bottom:1.4rem;
+          line-height:1.5;
+        "></div>
         <div style="display:flex;gap:.6rem;justify-content:flex-end">
-          <button id="confirmCancel" style="padding:.45rem 1rem;border-radius:6px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;font-size:.9rem">Cancel</button>
-          <button id="confirmOk" style="padding:.45rem 1rem;border-radius:6px;border:none;background:#e74c3c;color:#fff;cursor:pointer;font-size:.9rem;font-weight:600">Remove</button>
+          <button id="confirmCancel" style="
+            padding:.5rem 1.1rem;
+            border-radius:7px;
+            border:1px solid #3a3d5c;
+            background:#252840;
+            color:#c8cae0;
+            cursor:pointer;
+            font-size:.875rem;
+            font-weight:500;
+            line-height:1;
+          ">Cancel</button>
+          <button id="confirmOk" style="
+            padding:.5rem 1.1rem;
+            border-radius:7px;
+            border:none;
+            background:#e03030;
+            color:#ffffff;
+            cursor:pointer;
+            font-size:.875rem;
+            font-weight:600;
+            line-height:1;
+          ">Remove</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
@@ -332,6 +380,8 @@ async function resetHits() {
   );
 }
 
+// Event delegation for dynamically-generated source list buttons.
+// Replaces inline onclick/onchange which are blocked by Zoraxy's CSP headers.
 document.addEventListener("DOMContentLoaded", () => {
   showOnboarding();
   load();
