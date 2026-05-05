@@ -1,3 +1,3 @@
-module github.com/yax/zoraxy-datashield-blocklist
+module github.com/byteonabeach/zoraxy-multicidr-shield
 
-go 1.24
+go 1.23
