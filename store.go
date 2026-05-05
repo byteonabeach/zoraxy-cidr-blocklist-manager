@@ -56,9 +56,21 @@ var (
 	blockedCount atomic.Int64
 )
 
+func init() {
+	current = &store{
+		sources:   make(map[string]*sourceState),
+		lastBuild: time.Now(),
+	}
+}
+
 func snapshotStore() *store {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
+
+	if current == nil {
+		return &store{sources: make(map[string]*sourceState), lastBuild: time.Now()}
+	}
+
 	return current
 }
 
