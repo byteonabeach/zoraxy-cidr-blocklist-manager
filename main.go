@@ -306,33 +306,43 @@ func normalizeSourceURL(raw string) string {
 	return raw
 }
 
-func sniffHandler(req *plugin.DynamicSniffForwardRequest) plugin.SniffResult {
+func getClientIP(req *plugin.DynamicSniffForwardRequest) string {
+	if xff := req.Header["X-Forwarded-For"]; len(xff) > 0 && xff[0] != "" {
+		ips := strings.Split(xff[0], ",")
+		return strings.TrimSpace(ips[0])
+	}
+	if xri := req.Header["X-Real-Ip"]; len(xri) > 0 && xri[0] != "" {
+		return strings.TrimSpace(xri[0])
+	}
 	ipStr, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
-		ipStr = req.RemoteAddr
+		return req.RemoteAddr
 	}
+	return ipStr
+}
+
+func sniffHandler(req *plugin.DynamicSniffForwardRequest) plugin.SniffResult {
+	ipStr := getClientIP(req)
 	addr, err := netip.ParseAddr(strings.TrimSpace(ipStr))
 	if err != nil || shouldSkipAddr(addr) {
 		return plugin.SniffResultSkip
 	}
 
 	stateMu.RLock()
+	defer stateMu.RUnlock()
+
 	s := current
 	blocked, matched := s.matches(addr)
-	stateMu.RUnlock()
 
 	if !blocked {
 		return plugin.SniffResultSkip
 	}
+
 	blockedCount.Add(1)
-	if len(matched) > 0 {
-		stateMu.RLock()
-		for _, id := range matched {
-			if src, ok := current.sources[id]; ok && src != nil {
-				src.Hits.Add(1)
-			}
+	for _, id := range matched {
+		if src, ok := s.sources[id]; ok && src != nil {
+			src.Hits.Add(1)
 		}
-		stateMu.RUnlock()
 	}
 	return plugin.SniffResultAccept
 }
@@ -431,7 +441,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sortSources(ss []sourceSummary, order map[string]int) {
-	for i := range ss {
+	for i := 0; i < len(ss); i++ {
 		for j := i + 1; j < len(ss); j++ {
 			oi, oj := order[ss[i].ID], order[ss[j].ID]
 			if oi > oj {
@@ -519,6 +529,27 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "id": newID})
 }
 
+func syncStoreWithConfig() {
+	cfg := snapshotConfig()
+	old := snapshotStore()
+
+	newSources := make(map[string]*sourceState, len(cfg.Sources))
+	for _, sc := range cfg.Sources {
+		if prev, ok := old.sources[sc.ID]; ok && prev != nil {
+			clone := prev.clone()
+			clone.Config = sc
+			newSources[sc.ID] = clone
+		} else {
+			newSources[sc.ID] = &sourceState{Config: sc}
+		}
+	}
+
+	next := buildStoreFromSources(newSources)
+	stateMu.Lock()
+	current = next
+	stateMu.Unlock()
+}
+
 func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -560,17 +591,15 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func(id string, fetchNew bool) {
-		if fetchNew {
+	if urlChanged {
+		go func(id string) {
 			if err := refreshOneSource(id); err != nil {
 				log.Printf("[shield] Source %s re-fetch failed: %v", id, err)
 			}
-		} else {
-			if err := refreshAllSources(); err != nil {
-				log.Printf("[shield] Rebuild after update: %v", err)
-			}
-		}
-	}(req.ID, urlChanged)
+		}(req.ID)
+	} else {
+		syncStoreWithConfig()
+	}
 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -610,11 +639,7 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
-		if err := refreshAllSources(); err != nil {
-			log.Printf("[shield] Rebuild after remove: %v", err)
-		}
-	}()
+	syncStoreWithConfig()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -947,35 +972,26 @@ func autoNameFromURL(raw string) string {
 	if raw == "" {
 		return "Unnamed Source"
 	}
-
 	u, err := url.Parse(raw)
-
 	if err != nil {
 		return raw
 	}
-
 	host := u.Host
 	path := strings.Trim(u.Path, "/")
-
 	if path == "" {
 		return host
 	}
-
 	parts := strings.Split(path, "/")
 	last := parts[len(parts)-1]
-
 	if last == "" && len(parts) > 1 {
 		last = parts[len(parts)-2]
 	}
-
 	if len(last) > 48 {
 		last = last[:48]
 	}
-
 	if host != "" {
 		return fmt.Sprintf("%s — %s", host, last)
 	}
-
 	return last
 }
 
