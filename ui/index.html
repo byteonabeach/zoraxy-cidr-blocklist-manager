@@ -1,278 +1,379 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="zoraxy.csrf.Token" content="{{.csrfToken}}">
-  <title>Data-Shield Blocklist</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--theme_bg);
-      color: var(--text_color);
-      padding: 2rem;
-    }
-    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-    .subtitle { color: var(--text_color_secondary); font-size: 0.875rem; margin-bottom: 2rem; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }
-    .card {
-      background: var(--theme_bg_primary);
-      border-radius: 8px;
-      padding: 1.25rem 1.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
-    }
-    body.darkTheme .card {
-      box-shadow: 0 1px 3px rgba(0,0,0,.3);
-    }
-    .card-label {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      color: var(--text_color_secondary);
-      margin-bottom: 0.5rem;
-    }
-    .card-value {
-      font-size: 1.75rem;
-      font-weight: 700;
-      line-height: 1.2;
-    }
-    .card-value.small { font-size: 1rem; margin-top: .25rem; }
-    .badge {
-      display: inline-block;
-      padding: .25em .75em;
-      border-radius: 9999px;
-      font-size: .8rem;
-      font-weight: 600;
-    }
-    .badge-ok  { background: #c6f6d5; color: #276749; }
-    .badge-err { background: #fed7d7; color: #9b2c2c; }
-    .badge-loading { background: #e2e8f0; color: #4a5568; }
-    body.darkTheme .badge-ok  { background: #1a3a2a; color: #6ee7a0; }
-    body.darkTheme .badge-err { background: #3a1a1a; color: #fc8181; }
-    body.darkTheme .badge-loading { background: #2a2a2e; color: #a0aec0; }
-    button {
-      background: #3182ce;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: .6rem 1.25rem;
-      cursor: pointer;
-      font-size: .95rem;
-      transition: background .15s;
-    }
-    button:hover:not(:disabled) { background: #2b6cb0; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    body.darkTheme button { background: #4a7bb8; }
-    body.darkTheme button:hover:not(:disabled) { background: #3a6aa8; }
-    #msg { margin-top: .75rem; font-size: .875rem; color: var(--text_color_secondary); min-height: 1.25em; }
-    .test-section {
-      background: var(--theme_bg_primary);
-      border-radius: 8px;
-      padding: 1.25rem 1.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
-      margin-top: 1.5rem;
-    }
-    body.darkTheme .test-section {
-      box-shadow: 0 1px 3px rgba(0,0,0,.3);
-    }
-    .test-section h2 {
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      color: var(--text_color_secondary);
-      margin-bottom: 1rem;
-    }
-    .add-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
-    .add-row input {
-      flex: 1;
-      border: 1px solid var(--divider_color);
-      border-radius: 6px;
-      padding: .55rem .75rem;
-      font-size: .95rem;
-      outline: none;
-      background: var(--input_color);
-      color: var(--text_color);
-    }
-    .add-row input:focus { border-color: var(--theme_highlight); }
-    .ip-list { list-style: none; }
-    .ip-list li {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: .35rem 0;
-      border-bottom: 1px solid var(--divider_color);
-      font-family: monospace;
-      font-size: .95rem;
-    }
-    .ip-list li:last-child { border-bottom: none; }
-    .btn-remove {
-      background: #fed7d7;
-      color: #9b2c2c;
-      padding: .25rem .7rem;
-      font-size: .8rem;
-    }
-    .btn-remove:hover:not(:disabled) { background: #feb2b2; }
-    body.darkTheme .btn-remove { background: #3a1a1a; color: #fc8181; }
-    body.darkTheme .btn-remove:hover:not(:disabled) { background: #4a2020; }
-    .empty-note { color: var(--text_color_secondary); font-size: .875rem; }
-  </style>
-</head>
-<body>
-  <link rel="stylesheet" href="/darktheme.css">
-  <script>
-    // Must be at the start of body — mirrors darktheme.js placement in official Zoraxy plugins.
-    // Applies Zoraxy's stored theme immediately to prevent flash, and listens for live changes.
-    function applyZoraxyTheme() {
-      if (localStorage.getItem('theme') === 'dark') {
-        document.body.classList.add('darkTheme');
-      } else {
-        document.body.classList.remove('darkTheme');
-      }
-    }
-    applyZoraxyTheme();
-    window.addEventListener('storage', applyZoraxyTheme);
-  </script>
-  <h1>Data-Shield Blocklist</h1>
-  <p class="subtitle">Critical IPv4 Blocklist &mdash; blocks malicious IPs, refreshed every 6 hours</p>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="zoraxy.csrf.Token" content="{{.csrfToken}}" />
+        <title>CiDR Manager Blocklist</title>
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    sans-serif;
+                background: var(--theme_bg);
+                color: var(--text_color);
+                padding: 2rem;
+            }
+            h1 {
+                font-size: 1.5rem;
+                margin-bottom: 0.25rem;
+            }
+            .subtitle {
+                color: var(--text_color_secondary);
+                font-size: 0.875rem;
+                margin-bottom: 2rem;
+            }
+            .grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+                gap: 1rem;
+                margin-bottom: 2rem;
+            }
+            .card {
+                background: var(--theme_bg_primary);
+                border-radius: 8px;
+                padding: 1.25rem 1.5rem;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            }
+            body.darkTheme .card {
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            }
+            .card-label {
+                font-size: 0.7rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: var(--text_color_secondary);
+                margin-bottom: 0.5rem;
+            }
+            .card-value {
+                font-size: 1.75rem;
+                font-weight: 700;
+                line-height: 1.2;
+            }
+            .card-value.small {
+                font-size: 1rem;
+                margin-top: 0.25rem;
+            }
+            .badge {
+                display: inline-block;
+                padding: 0.25em 0.75em;
+                border-radius: 9999px;
+                font-size: 0.8rem;
+                font-weight: 600;
+            }
+            .badge-ok {
+                background: #c6f6d5;
+                color: #276749;
+            }
+            .badge-err {
+                background: #fed7d7;
+                color: #9b2c2c;
+            }
+            .badge-loading {
+                background: #e2e8f0;
+                color: #4a5568;
+            }
+            body.darkTheme .badge-ok {
+                background: #1a3a2a;
+                color: #6ee7a0;
+            }
+            body.darkTheme .badge-err {
+                background: #3a1a1a;
+                color: #fc8181;
+            }
+            body.darkTheme .badge-loading {
+                background: #2a2a2e;
+                color: #a0aec0;
+            }
+            button {
+                background: #3182ce;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 0.6rem 1.25rem;
+                cursor: pointer;
+                font-size: 0.95rem;
+                transition: background 0.15s;
+            }
+            button:hover:not(:disabled) {
+                background: #2b6cb0;
+            }
+            button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            body.darkTheme button {
+                background: #4a7bb8;
+            }
+            body.darkTheme button:hover:not(:disabled) {
+                background: #3a6aa8;
+            }
+            #msg {
+                margin-top: 0.75rem;
+                font-size: 0.875rem;
+                color: var(--text_color_secondary);
+                min-height: 1.25em;
+            }
+            .test-section {
+                background: var(--theme_bg_primary);
+                border-radius: 8px;
+                padding: 1.25rem 1.5rem;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+                margin-top: 1.5rem;
+            }
+            body.darkTheme .test-section {
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            }
+            .test-section h2 {
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: var(--text_color_secondary);
+                margin-bottom: 1rem;
+            }
+            .add-row {
+                display: flex;
+                gap: 0.5rem;
+                margin-bottom: 1rem;
+            }
+            .add-row input {
+                flex: 1;
+                border: 1px solid var(--divider_color);
+                border-radius: 6px;
+                padding: 0.55rem 0.75rem;
+                font-size: 0.95rem;
+                outline: none;
+                background: var(--input_color);
+                color: var(--text_color);
+            }
+            .add-row input:focus {
+                border-color: var(--theme_highlight);
+            }
+            .ip-list {
+                list-style: none;
+            }
+            .ip-list li {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0.35rem 0;
+                border-bottom: 1px solid var(--divider_color);
+                font-family: monospace;
+                font-size: 0.95rem;
+            }
+            .ip-list li:last-child {
+                border-bottom: none;
+            }
+            .btn-remove {
+                background: #fed7d7;
+                color: #9b2c2c;
+                padding: 0.25rem 0.7rem;
+                font-size: 0.8rem;
+            }
+            .btn-remove:hover:not(:disabled) {
+                background: #feb2b2;
+            }
+            body.darkTheme .btn-remove {
+                background: #3a1a1a;
+                color: #fc8181;
+            }
+            body.darkTheme .btn-remove:hover:not(:disabled) {
+                background: #4a2020;
+            }
+            .empty-note {
+                color: var(--text_color_secondary);
+                font-size: 0.875rem;
+            }
+        </style>
+    </head>
+    <body>
+        <link rel="stylesheet" href="/darktheme.css" />
+        <script>
+            function applyZoraxyTheme() {
+                if (localStorage.getItem("theme") === "dark") {
+                    document.body.classList.add("darkTheme");
+                } else {
+                    document.body.classList.remove("darkTheme");
+                }
+            }
+            applyZoraxyTheme();
+            window.addEventListener("storage", applyZoraxyTheme);
+        </script>
+        <h1>Data-Shield Blocklist</h1>
+        <p class="subtitle">
+            Critical IPv4 Blocklist &mdash; blocks malicious IPs, refreshed
+            every 6 hours
+        </p>
 
-  <div class="grid">
-    <div class="card">
-      <div class="card-label">Status</div>
-      <div id="status-val"><span class="badge badge-loading">Loading…</span></div>
-    </div>
-    <div class="card">
-      <div class="card-label">Blocked IPs in list</div>
-      <div class="card-value" id="ip-count">—</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Requests blocked</div>
-      <div class="card-value" id="blocked-count">—</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Last updated</div>
-      <div class="card-value small" id="last-updated">—</div>
-    </div>
-  </div>
+        <div class="grid">
+            <div class="card">
+                <div class="card-label">Status</div>
+                <div id="status-val">
+                    <span class="badge badge-loading">Loading…</span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-label">Blocked IPs in list</div>
+                <div class="card-value" id="ip-count">—</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Requests blocked</div>
+                <div class="card-value" id="blocked-count">—</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Last updated</div>
+                <div class="card-value small" id="last-updated">—</div>
+            </div>
+        </div>
 
-  <button id="refresh-btn" onclick="forceRefresh()">Refresh Blocklist Now</button>
-  <div id="msg"></div>
+        <button id="refresh-btn" onclick="forceRefresh()">
+            Refresh Blocklist Now
+        </button>
+        <div id="msg"></div>
 
-  <div class="test-section">
-    <h2>Manual test IPs</h2>
-    <div class="add-row">
-      <input type="text" id="ip-input" placeholder="1.2.3.4" />
-      <button onclick="addIP()">Add</button>
-    </div>
-    <ul class="ip-list" id="ip-list">
-      <li><span class="empty-note">No manual IPs added.</span></li>
-    </ul>
-  </div>
+        <div class="test-section">
+            <h2>Manual test IPs</h2>
+            <div class="add-row">
+                <input type="text" id="ip-input" placeholder="1.2.3.4" />
+                <button onclick="addIP()">Add</button>
+            </div>
+            <ul class="ip-list" id="ip-list">
+                <li><span class="empty-note">No manual IPs added.</span></li>
+            </ul>
+        </div>
 
-  <script>
-    function getCsrfToken() {
-      const meta = document.querySelector('meta[name="zoraxy.csrf.Token"]');
-      return meta ? meta.getAttribute('content') : '';
-    }
+        <script>
+            function getCsrfToken() {
+                const meta = document.querySelector(
+                    'meta[name="zoraxy.csrf.Token"]',
+                );
+                return meta ? meta.getAttribute("content") : "";
+            }
 
-    function fmt(n) {
-      return Number(n).toLocaleString();
-    }
+            function fmt(n) {
+                return Number(n).toLocaleString();
+            }
 
-    function renderManualIPs(ips) {
-      const list = document.getElementById('ip-list');
-      if (!ips || ips.length === 0) {
-        list.innerHTML = '<li><span class="empty-note">No manual IPs added.</span></li>';
-        return;
-      }
-      ips.sort();
-      list.innerHTML = ips.map(ip =>
-        `<li><span>${ip}</span><button class="btn-remove" onclick="removeIP('${ip}')">Remove</button></li>`
-      ).join('');
-    }
+            function renderManualIPs(ips) {
+                const list = document.getElementById("ip-list");
+                if (!ips || ips.length === 0) {
+                    list.innerHTML =
+                        '<li><span class="empty-note">No manual IPs added.</span></li>';
+                    return;
+                }
+                ips.sort();
+                list.innerHTML = ips
+                    .map(
+                        (ip) =>
+                            `<li><span>${ip}</span><button class="btn-remove" onclick="removeIP('${ip}')">Remove</button></li>`,
+                    )
+                    .join("");
+            }
 
-    function load() {
-      fetch('api/status')
-        .then(r => r.json())
-        .then(d => {
-          const el = document.getElementById('status-val');
-          if (d.loaded) {
-            el.innerHTML = '<span class="badge badge-ok">Active</span>';
-          } else {
-            el.innerHTML = '<span class="badge badge-err">Not loaded</span>';
-          }
-          document.getElementById('ip-count').textContent = fmt(d.ip_count);
-          document.getElementById('blocked-count').textContent = fmt(d.blocked_count);
-          const zero = '0001-01-01T00:00:00Z';
-          const upd = d.last_updated && d.last_updated !== zero
-            ? new Date(d.last_updated).toLocaleString()
-            : 'Never';
-          document.getElementById('last-updated').textContent = upd;
-          renderManualIPs(d.manual_ips);
-        })
-        .catch(() => {
-          document.getElementById('status-val').innerHTML =
-            '<span class="badge badge-err">Unreachable</span>';
-        });
-    }
+            function load() {
+                fetch("api/status")
+                    .then((r) => r.json())
+                    .then((d) => {
+                        const el = document.getElementById("status-val");
+                        if (d.loaded) {
+                            el.innerHTML =
+                                '<span class="badge badge-ok">Active</span>';
+                        } else {
+                            el.innerHTML =
+                                '<span class="badge badge-err">Not loaded</span>';
+                        }
+                        document.getElementById("ip-count").textContent = fmt(
+                            d.ip_count,
+                        );
+                        document.getElementById("blocked-count").textContent =
+                            fmt(d.blocked_count);
+                        const zero = "0001-01-01T00:00:00Z";
+                        const upd =
+                            d.last_updated && d.last_updated !== zero
+                                ? new Date(d.last_updated).toLocaleString()
+                                : "Never";
+                        document.getElementById("last-updated").textContent =
+                            upd;
+                        renderManualIPs(d.manual_ips);
+                    })
+                    .catch(() => {
+                        document.getElementById("status-val").innerHTML =
+                            '<span class="badge badge-err">Unreachable</span>';
+                    });
+            }
 
-    function addIP() {
-      const input = document.getElementById('ip-input');
-      const ip = input.value.trim();
-      if (!ip) return;
-      fetch('api/add-ip?ip=' + encodeURIComponent(ip))
-        .then(r => {
-          if (!r.ok) return r.text().then(t => { throw new Error(t.trim()); });
-          return r.json();
-        })
-        .then(() => { input.value = ''; load(); })
-        .catch(e => {
-          document.getElementById('msg').textContent = 'Error: ' + e.message;
-          setTimeout(() => { document.getElementById('msg').textContent = ''; }, 4000);
-        });
-    }
+            function addIP() {
+                const input = document.getElementById("ip-input");
+                const ip = input.value.trim();
+                if (!ip) return;
+                fetch("api/add-ip?ip=" + encodeURIComponent(ip))
+                    .then((r) => {
+                        if (!r.ok)
+                            return r.text().then((t) => {
+                                throw new Error(t.trim());
+                            });
+                        return r.json();
+                    })
+                    .then(() => {
+                        input.value = "";
+                        load();
+                    })
+                    .catch((e) => {
+                        document.getElementById("msg").textContent =
+                            "Error: " + e.message;
+                        setTimeout(() => {
+                            document.getElementById("msg").textContent = "";
+                        }, 4000);
+                    });
+            }
 
-    function removeIP(ip) {
-      fetch('api/remove-ip?ip=' + encodeURIComponent(ip))
-        .then(r => { if (!r.ok) throw new Error(); })
-        .then(() => load())
-        .catch(() => {
-          document.getElementById('msg').textContent = 'Failed to remove IP.';
-          setTimeout(() => { document.getElementById('msg').textContent = ''; }, 4000);
-        });
-    }
+            function removeIP(ip) {
+                fetch("api/remove-ip?ip=" + encodeURIComponent(ip))
+                    .then((r) => {
+                        if (!r.ok) throw new Error();
+                    })
+                    .then(() => load())
+                    .catch(() => {
+                        document.getElementById("msg").textContent =
+                            "Failed to remove IP.";
+                        setTimeout(() => {
+                            document.getElementById("msg").textContent = "";
+                        }, 4000);
+                    });
+            }
 
-    function forceRefresh() {
-      const btn = document.getElementById('refresh-btn');
-      const msg = document.getElementById('msg');
-      btn.disabled = true;
-      msg.textContent = 'Refresh started…';
-      fetch('api/refresh', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': getCsrfToken() }
-      })
-        .then(r => r.json())
-        .then(() => {
-          msg.textContent = 'Downloading blocklist — this may take a few seconds.';
-          setTimeout(() => {
+            function forceRefresh() {
+                const btn = document.getElementById("refresh-btn");
+                const msg = document.getElementById("msg");
+                btn.disabled = true;
+                msg.textContent = "Refresh started…";
+                fetch("api/refresh", {
+                    method: "POST",
+                    headers: { "X-CSRF-Token": getCsrfToken() },
+                })
+                    .then((r) => r.json())
+                    .then(() => {
+                        msg.textContent =
+                            "Downloading blocklist — this may take a few seconds.";
+                        setTimeout(() => {
+                            load();
+                            btn.disabled = false;
+                            msg.textContent = "";
+                        }, 6000);
+                    })
+                    .catch(() => {
+                        msg.textContent = "Request failed. Check plugin logs.";
+                        btn.disabled = false;
+                    });
+            }
+
             load();
-            btn.disabled = false;
-            msg.textContent = '';
-          }, 6000);
-        })
-        .catch(() => {
-          msg.textContent = 'Request failed. Check plugin logs.';
-          btn.disabled = false;
-        });
-    }
-
-    load();
-    setInterval(load, 30000);
-  </script>
-</body>
+            setInterval(load, 30000);
+        </script>
+    </body>
 </html>
