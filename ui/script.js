@@ -3,27 +3,22 @@ function showOnboarding() {
     document.getElementById("onboardingModal").style.display = "flex";
   }
 }
-
 function closeOnboarding() {
   localStorage.setItem("multicidr_onboarded", "true");
   document.getElementById("onboardingModal").style.display = "none";
 }
 
-const CSRF = () => {
-  const m = document.querySelector('meta[name="zoraxy.csrf.Token"]');
-  return m ? m.getAttribute("content") : "";
-};
-
+const CSRF = () =>
+  document
+    .querySelector('meta[name="zoraxy.csrf.Token"]')
+    ?.getAttribute("content") || "";
 const fmt = (n) =>
   (typeof n === "number" ? n : parseInt(n) || 0).toLocaleString();
-
 const fmtT = (t) => {
   if (!t) return "Never";
   const d = new Date(t);
-  if (isNaN(d) || d.getFullYear() < 2000) return "Never";
-  return d.toLocaleString();
+  return isNaN(d) || d.getFullYear() < 2000 ? "Never" : d.toLocaleString();
 };
-
 const fmtAgo = (t) => {
   if (!t) return "";
   const d = new Date(t);
@@ -66,7 +61,6 @@ async function api(path, body) {
 }
 
 let _state = null;
-
 function renderStats(d) {
   const statusEl = document.getElementById("statStatus");
   if (d.refreshing) {
@@ -78,7 +72,6 @@ function renderStats(d) {
   } else {
     statusEl.innerHTML = `<span class="pill pill-offline">Not loaded</span>`;
   }
-
   document.getElementById("statSources").textContent =
     `${d.enabled_count || 0} / ${d.source_count || 0}`;
   document.getElementById("statRanges").textContent = fmt(
@@ -88,7 +81,6 @@ function renderStats(d) {
     d.blocked_count || 0,
   );
   document.getElementById("statRefresh").textContent = fmtT(d.last_refresh);
-
   document.getElementById("sourceCount").textContent = d.source_count || 0;
   document.getElementById("lastBuilt").textContent = d.last_refresh
     ? `Built ${fmtAgo(d.last_refresh)}`
@@ -97,86 +89,74 @@ function renderStats(d) {
 
 function renderSources(sources) {
   const el = document.getElementById("sourceList");
+  el.innerHTML = "";
   if (!sources || sources.length === 0) {
-    el.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">🛡</div>
-        <h3>No sources configured yet</h3>
-        <p>Add a URL to a plain-text CIDR blocklist above.<br>The plugin will download and apply it automatically.</p>
-      </div>`;
+    el.innerHTML = `<div class="empty-state"><div class="icon">🛡</div><h3>No sources configured yet</h3><p>Add a URL to a plain-text CIDR blocklist above.<br>The plugin will download and apply it automatically.</p></div>`;
     return;
   }
 
-  el.innerHTML = sources
-    .map((s) => {
-      const hasError = s.last_error && s.last_error.length > 0;
-      const hasLoaded = s.loaded_entries > 0;
-      const lastRef = fmtAgo(s.last_refresh);
+  const tpl = document.getElementById("source-item-tpl").content;
+  const fragment = document.createDocumentFragment();
 
-      const proto = [
-        s.supports_ipv4 ? `<span class="proto-tag v4">IPv4</span>` : "",
-        s.supports_ipv6 ? `<span class="proto-tag v6">IPv6</span>` : "",
-      ]
-        .filter(Boolean)
-        .join("");
+  sources.forEach((s) => {
+    const node = tpl.cloneNode(true);
+    const item = node.querySelector(".source-item");
+    item.id = `src-${s.id}`;
+    if (!s.enabled) item.classList.add("disabled");
 
-      const errorTag = hasError
-        ? `<div class="error-tag">⚠ ${escHtml(s.last_error)}</div>`
-        : "";
+    node.querySelector(".source-name").textContent = s.name;
+    const urlLink = node.querySelector(".source-url a");
+    urlLink.href = s.url;
+    urlLink.textContent = s.url;
 
-      const metaItems = [
-        { label: "Entries", val: hasLoaded ? fmt(s.unique_entries) : "—" },
-        { label: "Hits", val: fmt(s.hits) },
-        { label: "Updated", val: lastRef || "—" },
-      ]
-        .map(
-          (m) => `
-      <div class="source-meta-item">
-        <span class="label">${m.label}</span>
-        <strong>${m.val}</strong>
-      </div>`,
-        )
-        .join("");
+    const errTag = node.querySelector(".error-tag");
+    if (s.last_error) {
+      errTag.style.display = "flex";
+      errTag.querySelector(".error-text").textContent = s.last_error;
+    }
 
-      return `
-    <div class="source-item${s.enabled ? "" : " disabled"}" id="src-${s.id}">
-      <div class="source-top">
-        <div style="flex:1;min-width:0">
-          <div class="source-name">${escHtml(s.name)}</div>
-          <div class="source-url"><a href="${escHtml(s.url)}" target="_blank" rel="noopener">${escHtml(s.url)}</a></div>
-          ${errorTag}
-          ${proto ? `<div class="proto-tags">${proto}</div>` : ""}
-        </div>
-        <div class="source-actions">
-          <label class="toggle-wrap" title="${s.enabled ? "Disable" : "Enable"} this source">
-            <span class="toggle">
-              <input type="checkbox" ${s.enabled ? "checked" : ""}
-                data-action="toggle" data-id="${escHtml(s.id)}" />
-              <span class="toggle-slider"></span>
-            </span>
-          </label>
-          <button class="btn btn-ghost btn-sm btn-icon"
-            data-action="refresh" data-id="${escHtml(s.id)}"
-            title="Re-fetch this source now">⟳</button>
-          <button class="btn btn-danger btn-sm btn-icon"
-            data-action="remove" data-id="${escHtml(s.id)}" data-name="${escHtml(s.name)}"
-            title="Remove source">✕</button>
-        </div>
-      </div>
-      <div class="source-meta">${metaItems}</div>
-    </div>`;
-    })
-    .join("");
-}
+    const protoBox = node.querySelector(".proto-tags");
+    if (s.supports_ipv4) {
+      const tag = document.createElement("span");
+      tag.className = "proto-tag v4";
+      tag.textContent = "IPv4";
+      protoBox.appendChild(tag);
+    }
+    if (s.supports_ipv6) {
+      const tag = document.createElement("span");
+      tag.className = "proto-tag v6";
+      tag.textContent = "IPv6";
+      protoBox.appendChild(tag);
+    }
 
-function escHtml(s) {
-  if (!s) return "";
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    node.querySelector("input[data-action='toggle']").checked = s.enabled;
+
+    const metaBox = node.querySelector(".source-meta");
+    const meta = [
+      {
+        label: "Entries",
+        val: s.loaded_entries > 0 ? fmt(s.unique_entries) : "—",
+      },
+      { label: "Hits", val: fmt(s.hits) },
+      { label: "Updated", val: s.last_refresh ? fmtAgo(s.last_refresh) : "—" },
+    ];
+    meta.forEach((m) => {
+      const div = document.createElement("div");
+      div.className = "source-meta-item";
+      div.innerHTML = `<span class="label">${m.label}</span><strong>${m.val}</strong>`;
+      metaBox.appendChild(div);
+    });
+
+    // Attach dataset for event delegation
+    node.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.dataset.id = s.id;
+      if (btn.dataset.action === "remove") btn.dataset.name = s.name;
+    });
+
+    fragment.appendChild(node);
+  });
+
+  el.appendChild(fragment);
 }
 
 async function load() {
@@ -196,7 +176,6 @@ async function addSource() {
   const nameEl = document.getElementById("addName");
   const btn = document.getElementById("addBtn");
   const msg = document.getElementById("addMsg");
-
   const url = urlEl.value.trim();
   const name = nameEl.value.trim();
   if (!url) {
@@ -206,7 +185,6 @@ async function addSource() {
 
   btn.disabled = true;
   msg.textContent = "Fetching list…";
-
   try {
     await api("api/source/add", { url, name, enabled: true });
     urlEl.value = "";
@@ -246,7 +224,7 @@ async function refreshSource(id) {
 
 function removeSource(id, name) {
   showConfirm(
-    `Remove "${name}"?`,
+    'Remove "' + name + '"?',
     "This will remove it from the blocklist immediately.",
     async () => {
       try {
@@ -263,67 +241,10 @@ function removeSource(id, name) {
 function showConfirm(title, message, onConfirm) {
   let modal = document.getElementById("confirmModal");
   if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "confirmModal";
-    modal.style.cssText = [
-      "display:none",
-      "position:fixed",
-      "inset:0",
-      "background:rgba(0,0,0,.55)",
-      "z-index:99999",
-      "align-items:center",
-      "justify-content:center",
-      "font-family:inherit",
-    ].join(";");
-    modal.innerHTML = `
-      <div style="
-        background:#1a1d2e;
-        border:1px solid #2e3150;
-        border-radius:12px;
-        padding:1.6rem 1.8rem;
-        max-width:400px;
-        width:90%;
-        box-shadow:0 12px 40px rgba(0,0,0,.7);
-        box-sizing:border-box;
-      ">
-        <div id="confirmTitle" style="
-          font-size:1rem;
-          font-weight:700;
-          color:#f0f0f5;
-          margin-bottom:.5rem;
-          line-height:1.4;
-        "></div>
-        <div id="confirmMsg" style="
-          font-size:.875rem;
-          color:#9a9db8;
-          margin-bottom:1.4rem;
-          line-height:1.5;
-        "></div>
-        <div style="display:flex;gap:.6rem;justify-content:flex-end">
-          <button id="confirmCancel" style="
-            padding:.5rem 1.1rem;
-            border-radius:7px;
-            border:1px solid #3a3d5c;
-            background:#252840;
-            color:#c8cae0;
-            cursor:pointer;
-            font-size:.875rem;
-            font-weight:500;
-            line-height:1;
-          ">Cancel</button>
-          <button id="confirmOk" style="
-            padding:.5rem 1.1rem;
-            border-radius:7px;
-            border:none;
-            background:#e03030;
-            color:#ffffff;
-            cursor:pointer;
-            font-size:.875rem;
-            font-weight:600;
-            line-height:1;
-          ">Remove</button>
-        </div>
-      </div>`;
+    const tpl = document
+      .getElementById("confirm-modal-tpl")
+      .content.cloneNode(true);
+    modal = tpl.querySelector(".confirm-backdrop");
     document.body.appendChild(modal);
   }
   document.getElementById("confirmTitle").textContent = title;
@@ -380,8 +301,6 @@ async function resetHits() {
   );
 }
 
-// Event delegation for dynamically-generated source list buttons.
-// Replaces inline onclick/onchange which are blocked by Zoraxy's CSP headers.
 document.addEventListener("DOMContentLoaded", () => {
   showOnboarding();
   load();

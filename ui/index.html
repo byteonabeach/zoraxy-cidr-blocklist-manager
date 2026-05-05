@@ -203,6 +203,67 @@
             </div>
         </div>
 
+        <!-- Templates -->
+        <template id="source-item-tpl">
+            <div class="source-item">
+                <div class="source-top">
+                    <div class="source-info">
+                        <div class="source-name"></div>
+                        <div class="source-url">
+                            <a href="#" target="_blank" rel="noopener"></a>
+                        </div>
+                        <div class="error-tag" style="display: none">
+                            ⚠ <span class="error-text"></span>
+                        </div>
+                        <div class="proto-tags"></div>
+                    </div>
+                    <div class="source-actions">
+                        <label class="toggle-wrap" title="Toggle source">
+                            <span class="toggle"
+                                ><input
+                                    type="checkbox"
+                                    data-action="toggle" /><span
+                                    class="toggle-slider"
+                                ></span
+                            ></span>
+                        </label>
+                        <button
+                            class="btn btn-ghost btn-sm btn-icon"
+                            data-action="refresh"
+                            title="Re-fetch"
+                        >
+                            ⟳
+                        </button>
+                        <button
+                            class="btn btn-danger btn-sm btn-icon"
+                            data-action="remove"
+                            title="Remove"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                </div>
+                <div class="source-meta"></div>
+            </div>
+        </template>
+
+        <template id="confirm-modal-tpl">
+            <div class="confirm-backdrop" id="confirmModal">
+                <div class="confirm-dialog">
+                    <div id="confirmTitle" class="confirm-title"></div>
+                    <div id="confirmMsg" class="confirm-message"></div>
+                    <div class="confirm-actions">
+                        <button id="confirmCancel" class="btn btn-ghost">
+                            Cancel
+                        </button>
+                        <button id="confirmOk" class="btn btn-danger">
+                            Confirm
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </template>
+
         <script src="script.js"></script>
     </body>
 </html>
