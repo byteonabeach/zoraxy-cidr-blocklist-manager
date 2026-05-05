@@ -9,8 +9,6 @@ type trieNode struct {
 	terminal bool
 }
 
-// ipTrie is a simple binary trie for CIDR containment checks.
-// It keeps separate instances for IPv4 (32 bits) and IPv6 (128 bits).
 type ipTrie struct {
 	bits     int
 	nodes    []trieNode
@@ -57,7 +55,7 @@ func (t *ipTrie) Insert(p netip.Prefix) {
 	}
 
 	idx := 0
-	for i := range bits {
+	for i := 0; i < bits; i++ {
 		bit := bitAt(raw, i)
 		next := t.nodes[idx].child[bit]
 		if next == -1 {
@@ -112,4 +110,63 @@ func bitAt(raw []byte, bitIndex int) int {
 	}
 	shift := 7 - (bitIndex % 8)
 	return int((raw[byteIndex] >> shift) & 1)
+}
+
+type ipSet struct {
+	single4 map[[4]byte]struct{}
+	single6 map[[16]byte]struct{}
+	trie4   *ipTrie
+	trie6   *ipTrie
+}
+
+func newIPSet() *ipSet {
+	return &ipSet{
+		single4: make(map[[4]byte]struct{}),
+		single6: make(map[[16]byte]struct{}),
+		trie4:   newIPTrie(32),
+		trie6:   newIPTrie(128),
+	}
+}
+
+func (s *ipSet) Insert(p netip.Prefix) {
+	if s == nil {
+		return
+	}
+	if p.IsSingleIP() {
+		addr := p.Addr()
+		if addr.Is4() {
+			s.single4[addr.As4()] = struct{}{}
+		} else {
+			s.single6[addr.As16()] = struct{}{}
+		}
+	} else {
+		if p.Addr().Is4() {
+			s.trie4.Insert(p)
+		} else {
+			s.trie6.Insert(p)
+		}
+	}
+}
+
+func (s *ipSet) Contains(addr netip.Addr) bool {
+	if s == nil || !addr.IsValid() {
+		return false
+	}
+	if addr.Is4() {
+		if _, ok := s.single4[addr.As4()]; ok {
+			return true
+		}
+		return s.trie4.Contains(addr)
+	}
+	if _, ok := s.single6[addr.As16()]; ok {
+		return true
+	}
+	return s.trie6.Contains(addr)
+}
+
+func (s *ipSet) Count() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.single4) + len(s.single6) + s.trie4.Count() + s.trie6.Count()
 }

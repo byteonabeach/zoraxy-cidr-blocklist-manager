@@ -150,12 +150,17 @@ function renderSources(sources) {
         <div class="source-actions">
           <label class="toggle-wrap" title="${s.enabled ? "Disable" : "Enable"} this source">
             <span class="toggle">
-              <input type="checkbox" ${s.enabled ? "checked" : ""} onchange="toggleSource('${s.id}',this.checked)"/>
+              <input type="checkbox" ${s.enabled ? "checked" : ""}
+                data-action="toggle" data-id="${escHtml(s.id)}" />
               <span class="toggle-slider"></span>
             </span>
           </label>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="refreshSource('${s.id}')" title="Re-fetch this source now">⟳</button>
-          <button class="btn btn-danger btn-sm btn-icon" onclick="removeSource('${s.id}','${escHtml(s.name)}')" title="Remove source">✕</button>
+          <button class="btn btn-ghost btn-sm btn-icon"
+            data-action="refresh" data-id="${escHtml(s.id)}"
+            title="Re-fetch this source now">⟳</button>
+          <button class="btn btn-danger btn-sm btn-icon"
+            data-action="remove" data-id="${escHtml(s.id)}" data-name="${escHtml(s.name)}"
+            title="Remove source">✕</button>
         </div>
       </div>
       <div class="source-meta">${metaItems}</div>
@@ -239,20 +244,55 @@ async function refreshSource(id) {
   }
 }
 
-async function removeSource(id, name) {
-  if (
-    !confirm(
-      `Remove "${name}"?\n\nThis will remove it from the blocklist immediately.`,
-    )
-  )
-    return;
-  try {
-    await api("api/source/remove", { id });
-    toast("Source removed.", "ok");
-    setTimeout(load, 800);
-  } catch (e) {
-    toast("Error: " + e.message, "err");
+function removeSource(id, name) {
+  showConfirm(
+    `Remove "${name}"?`,
+    "This will remove it from the blocklist immediately.",
+    async () => {
+      try {
+        await api("api/source/remove", { id });
+        toast("Source removed.", "ok");
+        setTimeout(load, 800);
+      } catch (e) {
+        toast("Error: " + e.message, "err");
+      }
+    },
+  );
+}
+
+function showConfirm(title, message, onConfirm) {
+  let modal = document.getElementById("confirmModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "confirmModal";
+    modal.style.cssText =
+      "display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center";
+    modal.innerHTML = `
+      <div style="background:var(--bg-card,#1e1e2e);border:1px solid var(--border,#333);border-radius:10px;padding:1.5rem 1.75rem;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.5)">
+        <div id="confirmTitle" style="font-size:1.05rem;font-weight:600;margin-bottom:.5rem"></div>
+        <div id="confirmMsg" style="font-size:.9rem;color:var(--text-muted,#aaa);margin-bottom:1.25rem"></div>
+        <div style="display:flex;gap:.6rem;justify-content:flex-end">
+          <button id="confirmCancel" style="padding:.45rem 1rem;border-radius:6px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;font-size:.9rem">Cancel</button>
+          <button id="confirmOk" style="padding:.45rem 1rem;border-radius:6px;border:none;background:#e74c3c;color:#fff;cursor:pointer;font-size:.9rem;font-weight:600">Remove</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
   }
+  document.getElementById("confirmTitle").textContent = title;
+  document.getElementById("confirmMsg").textContent = message;
+  modal.style.display = "flex";
+
+  const close = () => {
+    modal.style.display = "none";
+  };
+  document.getElementById("confirmCancel").onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+  document.getElementById("confirmOk").onclick = () => {
+    close();
+    onConfirm();
+  };
 }
 
 async function refreshAll() {
@@ -277,16 +317,37 @@ async function refreshAll() {
 }
 
 async function resetHits() {
-  if (!confirm("Reset all hit counters to zero?")) return;
-  try {
-    await api("api/reset-hits", {});
-    toast("Hit counters reset.", "ok");
-    setTimeout(load, 300);
-  } catch (e) {
-    toast("Error: " + e.message, "err");
-  }
+  showConfirm(
+    "Reset hit counters?",
+    "All hit counters will be reset to zero.",
+    async () => {
+      try {
+        await api("api/reset-hits", {});
+        toast("Hit counters reset.", "ok");
+        setTimeout(load, 300);
+      } catch (e) {
+        toast("Error: " + e.message, "err");
+      }
+    },
+  );
 }
 
-showOnboarding();
-load();
-setInterval(load, 20000);
+document.addEventListener("DOMContentLoaded", () => {
+  showOnboarding();
+  load();
+  setInterval(load, 20000);
+
+  const list = document.getElementById("sourceList");
+  list.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    const { action, id, name } = btn.dataset;
+    if (action === "refresh") refreshSource(id);
+    if (action === "remove") removeSource(id, name);
+  });
+  list.addEventListener("change", (e) => {
+    const el = e.target.closest("[data-action='toggle']");
+    if (!el) return;
+    toggleSource(el.dataset.id, el.checked);
+  });
+});
