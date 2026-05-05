@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +31,8 @@ const (
 	pluginID         = "io.byteonabeach.zoraxy.cidr-manager"
 	pluginDisplayURL = "https://github.com/byteonabeach/zoraxy-cidr-blocklist-manager"
 	refreshInterval  = 6 * time.Hour
+	maxSourceSize    = 100 * 1024 * 1024
+	maxLines         = 5000000
 )
 
 var pluginSpec = plugin.IntroSpect{
@@ -59,21 +63,17 @@ type appConfig struct {
 }
 
 type sourceState struct {
-	Config        sourceConfig   `json:"config"`
-	LoadedEntries int            `json:"loaded_entries"`
-	UniqueEntries int            `json:"unique_entries"`
-	LastRefresh   time.Time      `json:"last_refresh"`
-	LastError     string         `json:"last_error,omitempty"`
-	Hits          atomic.Int64   `json:"-"`
-	Prefixes      []netip.Prefix `json:"-"`
-	trie4         *ipTrie
-	trie6         *ipTrie
+	Config        sourceConfig
+	LoadedEntries int
+	UniqueEntries int
+	LastRefresh   time.Time
+	LastError     string
+	Hits          atomic.Int64
+	set           *ipSet
 }
 
 type store struct {
 	sources     map[string]*sourceState
-	trie4       *ipTrie
-	trie6       *ipTrie
 	uniqueCount int
 	lastBuild   time.Time
 }
@@ -124,9 +124,7 @@ type idRequest struct {
 type fetchedSource struct {
 	loadedEntries int
 	uniqueEntries int
-	prefixes      []netip.Prefix
-	trie4         *ipTrie
-	trie6         *ipTrie
+	set           *ipSet
 }
 
 var (
@@ -154,8 +152,6 @@ func init() {
 	}
 	current = &store{
 		sources:   map[string]*sourceState{},
-		trie4:     newIPTrie(32),
-		trie6:     newIPTrie(128),
 		lastBuild: time.Now(),
 	}
 }
@@ -170,10 +166,8 @@ func main() {
 	if err := loadConfig(); err != nil {
 		log.Printf("[shield] Warning: could not load config: %v", err)
 	}
-	// Normalise existing source URLs but do NOT inject a default source.
 	normaliseConfigURLs()
 
-	// Initial blocklist fetch (only if sources are configured).
 	if len(appCfg.Sources) > 0 {
 		if err := refreshAllSources(); err != nil {
 			log.Printf("[shield] Initial refresh finished with issues: %v", err)
@@ -239,12 +233,6 @@ func loadConfig() error {
 	return json.Unmarshal(data, &appCfg)
 }
 
-func saveConfig() error {
-	configMu.Lock()
-	defer configMu.Unlock()
-	return saveConfigLocked()
-}
-
 func saveConfigLocked() error {
 	tmp := configPath + ".tmp"
 	data, err := json.MarshalIndent(appCfg, "", "  ")
@@ -257,8 +245,6 @@ func saveConfigLocked() error {
 	return os.Rename(tmp, configPath)
 }
 
-// normaliseConfigURLs fixes source IDs and normalises GitHub blob URLs - does
-// NOT inject any default sources.
 func normaliseConfigURLs() {
 	configMu.Lock()
 	defer configMu.Unlock()
@@ -309,7 +295,6 @@ func normalizeSourceURL(raw string) string {
 	if err != nil {
 		return raw
 	}
-
 	if strings.EqualFold(u.Host, "github.com") {
 		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 		if len(parts) >= 5 && parts[2] == "blob" {
@@ -421,8 +406,8 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 				LastRefresh:   src.LastRefresh,
 				LastError:     src.LastError,
 				Hits:          src.Hits.Load(),
-				SupportsIPv4:  src.trie4 != nil && src.trie4.Count() > 0,
-				SupportsIPv6:  src.trie6 != nil && src.trie6.Count() > 0,
+				SupportsIPv4:  src.set != nil && (len(src.set.single4) > 0 || src.set.trie4.Count() > 0),
+				SupportsIPv6:  src.set != nil && (len(src.set.single6) > 0 || src.set.trie6.Count() > 0),
 			})
 			if src.Config.Enabled {
 				resp.EnabledCount++
@@ -446,7 +431,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sortSources(ss []sourceSummary, order map[string]int) {
-	for i := 0; i < len(ss); i++ {
+	for i := range ss {
 		for j := i + 1; j < len(ss); j++ {
 			oi, oj := order[ss[i].ID], order[ss[j].ID]
 			if oi > oj {
@@ -664,7 +649,6 @@ func refreshAllSources() error {
 	cfg := snapshotConfig()
 	old := snapshotStore()
 	newSources := make(map[string]*sourceState, len(cfg.Sources))
-	unique := make(map[string]struct{}, 110000)
 	var issues []string
 
 	for _, sc := range cfg.Sources {
@@ -704,14 +688,10 @@ func refreshAllSources() error {
 		base.LoadedEntries = fetched.loadedEntries
 		base.UniqueEntries = fetched.uniqueEntries
 		base.LastRefresh = time.Now()
-		base.Prefixes = append([]netip.Prefix(nil), fetched.prefixes...)
-		base.trie4 = fetched.trie4
-		base.trie6 = fetched.trie6
+		base.set = fetched.set
 		newSources[sc.ID] = base
 
-		for _, p := range fetched.prefixes {
-			unique[p.String()] = struct{}{}
-		}
+		runtime.GC()
 	}
 
 	next := buildStoreFromSources(newSources)
@@ -719,7 +699,8 @@ func refreshAllSources() error {
 	current = next
 	stateMu.Unlock()
 
-	log.Printf("[shield] Refreshed %d sources, %d unique CIDRs", len(newSources), len(unique))
+	runtime.GC()
+
 	if len(issues) > 0 {
 		return errors.New(strings.Join(issues, "; "))
 	}
@@ -749,7 +730,6 @@ func refreshOneSource(id string) error {
 	newSources := cloneSourceMap(old.sources)
 
 	if !target.Enabled {
-		// Source is disabled — just update config reference in state
 		if existing, ok := newSources[id]; ok && existing != nil {
 			clone := existing.clone()
 			clone.Config = *target
@@ -788,15 +768,15 @@ func refreshOneSource(id string) error {
 	base.LoadedEntries = fetched.loadedEntries
 	base.UniqueEntries = fetched.uniqueEntries
 	base.LastRefresh = time.Now()
-	base.Prefixes = append([]netip.Prefix(nil), fetched.prefixes...)
-	base.trie4 = fetched.trie4
-	base.trie6 = fetched.trie6
+	base.set = fetched.set
 	newSources[id] = base
 
 	next := buildStoreFromSources(newSources)
 	stateMu.Lock()
 	current = next
 	stateMu.Unlock()
+
+	runtime.GC()
 	return nil
 }
 
@@ -810,7 +790,20 @@ func fetchSource(rawURL string) (*fetchedSource, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from server", resp.StatusCode)
 	}
-	return parseSourceReader(resp.Body)
+
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		size, _ := strconv.ParseInt(cl, 10, 64)
+		if size > maxSourceSize {
+			return nil, fmt.Errorf("file too large (%d bytes, max %d)", size, maxSourceSize)
+		}
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(strings.ToLower(ct), "text/html") {
+		return nil, fmt.Errorf("invalid content type: %s (expected plain text)", ct)
+	}
+
+	return parseSourceReader(io.LimitReader(resp.Body, maxSourceSize))
 }
 
 func parseSourceReader(r io.Reader) (*fetchedSource, error) {
@@ -818,11 +811,10 @@ func parseSourceReader(r io.Reader) (*fetchedSource, error) {
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 
 	result := &fetchedSource{
-		trie4: newIPTrie(32),
-		trie6: newIPTrie(128),
+		set: newIPSet(),
 	}
-	seen := make(map[string]struct{}, 65536)
 	loaded := 0
+	valid := 0
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -835,28 +827,34 @@ func parseSourceReader(r io.Reader) (*fetchedSource, error) {
 		if line == "" {
 			continue
 		}
+
 		loaded++
+		if loaded > maxLines {
+			break
+		}
+
 		prefix, err := parsePrefix(line)
 		if err != nil {
+			if loaded == 50 && valid < 5 {
+				return nil, fmt.Errorf("file does not appear to be a valid CIDR/IP list")
+			}
 			continue
 		}
-		key := prefix.String()
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		result.prefixes = append(result.prefixes, prefix)
-		if prefix.Addr().Is4() {
-			result.trie4.Insert(prefix)
-		} else {
-			result.trie6.Insert(prefix)
-		}
+
+		valid++
+		result.set.Insert(prefix)
 	}
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+
+	if loaded > 10 && valid == 0 {
+		return nil, fmt.Errorf("file contains no valid IPs/CIDRs")
+	}
+
 	result.loadedEntries = loaded
-	result.uniqueEntries = len(result.prefixes)
+	result.uniqueEntries = result.set.Count()
 	return result, nil
 }
 
@@ -876,10 +874,7 @@ func parsePrefix(line string) (netip.Prefix, error) {
 	if err != nil {
 		return netip.Prefix{}, err
 	}
-	if addr.Is4() {
-		return netip.PrefixFrom(addr, 32).Masked(), nil
-	}
-	return netip.PrefixFrom(addr, 128).Masked(), nil
+	return netip.PrefixFrom(addr, addr.BitLen()).Masked(), nil
 }
 
 func buildStoreFromSources(sources map[string]*sourceState) *store {
@@ -888,25 +883,15 @@ func buildStoreFromSources(sources map[string]*sourceState) *store {
 	}
 	next := &store{
 		sources:   sources,
-		trie4:     newIPTrie(32),
-		trie6:     newIPTrie(128),
 		lastBuild: time.Now(),
 	}
-	unique := make(map[string]struct{}, 110000)
+	count := 0
 	for _, src := range sources {
-		if src == nil || !src.Config.Enabled {
-			continue
-		}
-		for _, p := range src.Prefixes {
-			unique[p.String()] = struct{}{}
-			if p.Addr().Is4() {
-				next.trie4.Insert(p)
-			} else {
-				next.trie6.Insert(p)
-			}
+		if src != nil && src.Config.Enabled {
+			count += src.UniqueEntries
 		}
 	}
-	next.uniqueCount = len(unique)
+	next.uniqueCount = count
 	return next
 }
 
@@ -930,27 +915,12 @@ func (s *store) matches(addr netip.Addr) (bool, []string) {
 	if s == nil {
 		return false, nil
 	}
-	var trie *ipTrie
-	if addr.Is4() {
-		trie = s.trie4
-	} else {
-		trie = s.trie6
-	}
-	if trie == nil || !trie.Contains(addr) {
-		return false, nil
-	}
 	var matched []string
 	for id, src := range s.sources {
 		if src == nil || !src.Config.Enabled {
 			continue
 		}
-		var st *ipTrie
-		if addr.Is4() {
-			st = src.trie4
-		} else {
-			st = src.trie6
-		}
-		if st != nil && st.Contains(addr) {
+		if src.set != nil && src.set.Contains(addr) {
 			matched = append(matched, id)
 		}
 	}
@@ -967,9 +937,7 @@ func (s *sourceState) clone() *sourceState {
 		UniqueEntries: s.UniqueEntries,
 		LastRefresh:   s.LastRefresh,
 		LastError:     s.LastError,
-		Prefixes:      append([]netip.Prefix(nil), s.Prefixes...),
-		trie4:         s.trie4,
-		trie6:         s.trie6,
+		set:           s.set,
 	}
 	out.Hits.Store(s.Hits.Load())
 	return out
@@ -979,26 +947,35 @@ func autoNameFromURL(raw string) string {
 	if raw == "" {
 		return "Unnamed Source"
 	}
+
 	u, err := url.Parse(raw)
+
 	if err != nil {
 		return raw
 	}
+
 	host := u.Host
 	path := strings.Trim(u.Path, "/")
+
 	if path == "" {
 		return host
 	}
+
 	parts := strings.Split(path, "/")
 	last := parts[len(parts)-1]
+
 	if last == "" && len(parts) > 1 {
 		last = parts[len(parts)-2]
 	}
+
 	if len(last) > 48 {
 		last = last[:48]
 	}
+
 	if host != "" {
 		return fmt.Sprintf("%s — %s", host, last)
 	}
+
 	return last
 }
 
