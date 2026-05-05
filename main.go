@@ -28,20 +28,19 @@ var uiFiles embed.FS
 const (
 	pluginID         = "io.byteonabeach.zoraxy.cidr-manager"
 	pluginDisplayURL = "https://github.com/byteonabeach/zoraxy-cidr-blocklist-manager"
-	defaultSourceURL = "https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_critical_data-shield_ipv4_blocklist.txt"
 	refreshInterval  = 6 * time.Hour
 )
 
 var pluginSpec = plugin.IntroSpect{
 	ID:                    pluginID,
-	Name:                  "byteonabeach MultiCIDR Shield",
+	Name:                  "MultiCIDR Shield",
 	Author:                "byteonabeach",
 	AuthorContact:         "",
-	Description:           "Blocks incoming IPs/CIDRs from one or more user-managed blocklist sources. Inspired by Yax's Data-Shield plugin.",
+	Description:           "Blocks incoming IPs/CIDRs from user-managed remote blocklist sources. Add any URL pointing to a plain-text CIDR list and the plugin will download, parse, and enforce it automatically.",
 	URL:                   pluginDisplayURL,
 	Type:                  plugin.PluginType_Router,
 	VersionMajor:          1,
-	VersionMinor:          0,
+	VersionMinor:          1,
 	VersionPatch:          0,
 	DynamicCaptureSniff:   "/sniff",
 	DynamicCaptureIngress: "/block",
@@ -102,7 +101,7 @@ type statusResponse struct {
 	BlockedCount  int64           `json:"blocked_count"`
 	LastRefresh   time.Time       `json:"last_refresh"`
 	Sources       []sourceSummary `json:"sources"`
-	ConfigPath    string          `json:"config_path"`
+	Refreshing    bool            `json:"refreshing"`
 }
 
 type addSourceRequest struct {
@@ -146,16 +145,9 @@ var (
 
 func init() {
 	for _, cidr := range []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"169.254.0.0/16",
-		"100.64.0.0/10",
-		"::1/128",
-		"fe80::/10",
-		"fc00::/7",
-		"ff00::/8",
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
+		"::1/128", "fe80::/10", "fc00::/7", "ff00::/8",
 	} {
 		_, network, _ := net.ParseCIDR(cidr)
 		privateNets = append(privateNets, network)
@@ -171,19 +163,23 @@ func init() {
 func main() {
 	configSpec, err := plugin.ServeAndRecvSpec(&pluginSpec)
 	if err != nil {
-		log.Fatal("[byteonabeach-shield] Failed to receive configure spec:", err)
+		log.Fatal("[shield] Failed to receive configure spec:", err)
 	}
 
 	initConfigPath()
 	if err := loadConfig(); err != nil {
-		log.Printf("[byteonabeach-shield] Warning: could not load config: %v", err)
+		log.Printf("[shield] Warning: could not load config: %v", err)
 	}
-	ensureDefaultSource()
-	if err := saveConfig(); err != nil {
-		log.Printf("[byteonabeach-shield] Warning: could not save config: %v", err)
-	}
-	if err := refreshAllSources(); err != nil {
-		log.Printf("[byteonabeach-shield] Initial refresh finished with issues: %v", err)
+	// Normalise existing source URLs but do NOT inject a default source.
+	normaliseConfigURLs()
+
+	// Initial blocklist fetch (only if sources are configured).
+	if len(appCfg.Sources) > 0 {
+		if err := refreshAllSources(); err != nil {
+			log.Printf("[shield] Initial refresh finished with issues: %v", err)
+		}
+	} else {
+		log.Println("[shield] No sources configured yet — add URLs via the UI.")
 	}
 
 	go func() {
@@ -191,7 +187,7 @@ func main() {
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := refreshAllSources(); err != nil {
-				log.Printf("[byteonabeach-shield] Scheduled refresh finished with issues: %v", err)
+				log.Printf("[shield] Scheduled refresh finished with issues: %v", err)
 			}
 		}
 	}()
@@ -204,7 +200,7 @@ func main() {
 
 	uiRouter := plugin.NewPluginEmbedUIRouter(pluginID, &uiFiles, "/ui", "/ui")
 	uiRouter.RegisterTerminateHandler(func() {
-		log.Println("[byteonabeach-shield] Plugin terminated by Zoraxy")
+		log.Println("[shield] Plugin terminated by Zoraxy")
 	}, mux)
 	uiRouter.HandleFunc("/api/status", statusHandler, mux)
 	uiRouter.HandleFunc("/api/refresh", refreshAllHandler, mux)
@@ -216,23 +212,22 @@ func main() {
 	uiRouter.AttachHandlerToMux(mux)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", configSpec.Port)
-	log.Printf("[byteonabeach-shield] Plugin listening on %s", addr)
+	log.Printf("[shield] Plugin listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
 func initConfigPath() {
 	exe, err := os.Executable()
 	if err != nil {
-		configPath = "byteonabeach-multicidr-shield.config.json"
+		configPath = "multicidr-shield.config.json"
 		return
 	}
-	configPath = filepath.Join(filepath.Dir(exe), "byteonabeach-multicidr-shield.config.json")
+	configPath = filepath.Join(filepath.Dir(exe), "multicidr-shield.config.json")
 }
 
 func loadConfig() error {
 	configMu.Lock()
 	defer configMu.Unlock()
-
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -262,31 +257,25 @@ func saveConfigLocked() error {
 	return os.Rename(tmp, configPath)
 }
 
-func ensureDefaultSource() {
+// normaliseConfigURLs fixes source IDs and normalises GitHub blob URLs - does
+// NOT inject any default sources.
+func normaliseConfigURLs() {
 	configMu.Lock()
 	defer configMu.Unlock()
-
 	changed := false
-	if len(appCfg.Sources) == 0 {
-		appCfg.Sources = []sourceConfig{{
-			ID:      newSourceID(),
-			Name:    "Data-Shield Critical IPv4",
-			URL:     defaultSourceURL,
-			Enabled: true,
-		}}
-		changed = true
-	}
 	for i := range appCfg.Sources {
 		if strings.TrimSpace(appCfg.Sources[i].ID) == "" {
 			appCfg.Sources[i].ID = newSourceID()
 			changed = true
 		}
-		appCfg.Sources[i].URL = normalizeSourceURL(appCfg.Sources[i].URL)
+		norm := normalizeSourceURL(appCfg.Sources[i].URL)
+		if norm != appCfg.Sources[i].URL {
+			appCfg.Sources[i].URL = norm
+			changed = true
+		}
 	}
 	if changed {
-		if err := saveConfigLocked(); err != nil {
-			log.Printf("[byteonabeach-shield] Warning: could not save default config: %v", err)
-		}
+		_ = saveConfigLocked()
 	}
 }
 
@@ -308,7 +297,7 @@ func updateConfig(mutator func(cfg *appConfig) error) error {
 }
 
 func newSourceID() string {
-	return fmt.Sprintf("src-%d-%d", time.Now().UnixNano(), time.Now().UnixNano()%1_000_000)
+	return fmt.Sprintf("src-%d", time.Now().UnixNano())
 }
 
 func normalizeSourceURL(raw string) string {
@@ -320,6 +309,7 @@ func normalizeSourceURL(raw string) string {
 	if err != nil {
 		return raw
 	}
+
 	if strings.EqualFold(u.Host, "github.com") {
 		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 		if len(parts) >= 5 && parts[2] == "blob" {
@@ -336,7 +326,6 @@ func sniffHandler(req *plugin.DynamicSniffForwardRequest) plugin.SniffResult {
 	if err != nil {
 		ipStr = req.RemoteAddr
 	}
-
 	addr, err := netip.ParseAddr(strings.TrimSpace(ipStr))
 	if err != nil || shouldSkipAddr(addr) {
 		return plugin.SniffResultSkip
@@ -350,7 +339,6 @@ func sniffHandler(req *plugin.DynamicSniffForwardRequest) plugin.SniffResult {
 	if !blocked {
 		return plugin.SniffResultSkip
 	}
-
 	blockedCount.Add(1)
 	if len(matched) > 0 {
 		stateMu.RLock()
@@ -389,20 +377,20 @@ func shouldSkipAddr(addr netip.Addr) bool {
 func blockHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = fmt.Fprint(w, `<!DOCTYPE html>
+	fmt.Fprint(w, `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>403 Forbidden</title>
   <style>
-    body { font-family: sans-serif; max-width: 680px; margin: 4rem auto; padding: 0 1rem; text-align: center; line-height: 1.5; }
-    h1 { color: #c0392b; margin-bottom: .5rem; }
-    p { color: #555; }
+    body{font-family:sans-serif;max-width:580px;margin:5rem auto;padding:0 1.5rem;text-align:center}
+    h1{font-size:2.5rem;color:#c0392b;margin-bottom:.5rem}
+    p{color:#666;line-height:1.6}
   </style>
 </head>
 <body>
   <h1>403 Forbidden</h1>
-  <p>Your IP address matched one of the configured CIDR sources and was denied by the byteonabeach MultiCIDR Shield.</p>
+  <p>Your IP address is listed in one of the configured CIDR blocklists and has been denied access by the MultiCIDR Shield plugin.</p>
 </body>
 </html>`)
 }
@@ -410,9 +398,11 @@ func blockHandler(w http.ResponseWriter, r *http.Request) {
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	stateMu.RLock()
 	s := current
-	resp := statusResponse{ConfigPath: configPath, BlockedCount: blockedCount.Load()}
+	resp := statusResponse{
+		BlockedCount: blockedCount.Load(),
+		Refreshing:   refreshing.Load() == 1,
+	}
 	if s != nil {
-		resp.Loaded = len(s.sources) > 0
 		resp.SourceCount = len(s.sources)
 		resp.UniqueEntries = s.uniqueCount
 		resp.LastRefresh = s.lastBuild
@@ -440,11 +430,30 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 				resp.DisabledCount++
 			}
 		}
+		resp.Loaded = resp.EnabledCount > 0 && resp.UniqueEntries > 0
 	}
 	stateMu.RUnlock()
 
+	cfg := snapshotConfig()
+	orderMap := make(map[string]int, len(cfg.Sources))
+	for i, sc := range cfg.Sources {
+		orderMap[sc.ID] = i
+	}
+	sortSources(resp.Sources, orderMap)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func sortSources(ss []sourceSummary, order map[string]int) {
+	for i := 0; i < len(ss); i++ {
+		for j := i + 1; j < len(ss); j++ {
+			oi, oj := order[ss[i].ID], order[ss[j].ID]
+			if oi > oj {
+				ss[i], ss[j] = ss[j], ss[i]
+			}
+		}
+	}
 }
 
 func refreshAllHandler(w http.ResponseWriter, r *http.Request) {
@@ -454,7 +463,7 @@ func refreshAllHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		if err := refreshAllSources(); err != nil {
-			log.Printf("[byteonabeach-shield] Manual refresh completed with issues: %v", err)
+			log.Printf("[shield] Manual refresh completed with issues: %v", err)
 		}
 	}()
 	writeJSON(w, map[string]string{"status": "refresh_started"})
@@ -489,30 +498,40 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.URL = normalizeSourceURL(req.URL)
 	if req.URL == "" {
-		http.Error(w, "Bad Request: URL is required", http.StatusBadRequest)
+		http.Error(w, "URL is required", http.StatusBadRequest)
 		return
 	}
 	if req.Name == "" {
 		req.Name = autoNameFromURL(req.URL)
 	}
+
+	var newID string
 	if err := updateConfig(func(cfg *appConfig) error {
+		for _, s := range cfg.Sources {
+			if s.URL == req.URL {
+				return errors.New("a source with this URL already exists")
+			}
+		}
+		newID = newSourceID()
 		cfg.Sources = append(cfg.Sources, sourceConfig{
-			ID:      newSourceID(),
+			ID:      newID,
 			Name:    req.Name,
 			URL:     req.URL,
 			Enabled: req.Enabled,
 		})
 		return nil
 	}); err != nil {
-		http.Error(w, "Failed to save source: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	go func() {
-		if err := refreshAllSources(); err != nil {
-			log.Printf("[byteonabeach-shield] Source added, refresh completed with issues: %v", err)
+
+	go func(id string) {
+		if err := refreshOneSource(id); err != nil {
+			log.Printf("[shield] Source %s initial fetch failed: %v", id, err)
 		}
-	}()
-	writeJSON(w, map[string]string{"status": "ok"})
+	}(newID)
+
+	writeJSON(w, map[string]string{"status": "ok", "id": newID})
 }
 
 func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
@@ -529,9 +548,10 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.URL = normalizeSourceURL(req.URL)
 	if req.ID == "" {
-		http.Error(w, "Bad Request: missing id", http.StatusBadRequest)
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
+	urlChanged := false
 	if err := updateConfig(func(cfg *appConfig) error {
 		for i := range cfg.Sources {
 			if cfg.Sources[i].ID != req.ID {
@@ -540,8 +560,9 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 			if req.Name != "" {
 				cfg.Sources[i].Name = req.Name
 			}
-			if req.URL != "" {
+			if req.URL != "" && req.URL != cfg.Sources[i].URL {
 				cfg.Sources[i].URL = req.URL
+				urlChanged = true
 			}
 			if req.Enabled != nil {
 				cfg.Sources[i].Enabled = *req.Enabled
@@ -550,14 +571,22 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return errors.New("source not found")
 	}); err != nil {
-		http.Error(w, "Failed to update source: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	go func() {
-		if err := refreshAllSources(); err != nil {
-			log.Printf("[byteonabeach-shield] Source updated, refresh completed with issues: %v", err)
+
+	go func(id string, fetchNew bool) {
+		if fetchNew {
+			if err := refreshOneSource(id); err != nil {
+				log.Printf("[shield] Source %s re-fetch failed: %v", id, err)
+			}
+		} else {
+			if err := refreshAllSources(); err != nil {
+				log.Printf("[shield] Rebuild after update: %v", err)
+			}
 		}
-	}()
+	}(req.ID, urlChanged)
+
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -573,25 +602,32 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ID = strings.TrimSpace(req.ID)
 	if req.ID == "" {
-		http.Error(w, "Bad Request: missing id", http.StatusBadRequest)
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
 	if err := updateConfig(func(cfg *appConfig) error {
 		next := cfg.Sources[:0]
+		found := false
 		for _, s := range cfg.Sources {
-			if s.ID != req.ID {
-				next = append(next, s)
+			if s.ID == req.ID {
+				found = true
+				continue
 			}
+			next = append(next, s)
+		}
+		if !found {
+			return errors.New("source not found")
 		}
 		cfg.Sources = append([]sourceConfig(nil), next...)
 		return nil
 	}); err != nil {
-		http.Error(w, "Failed to remove source: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	go func() {
 		if err := refreshAllSources(); err != nil {
-			log.Printf("[byteonabeach-shield] Source removed, refresh completed with issues: %v", err)
+			log.Printf("[shield] Rebuild after remove: %v", err)
 		}
 	}()
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -608,48 +644,15 @@ func refreshSourceHandler(w http.ResponseWriter, r *http.Request) {
 	go func(id string) {
 		if id == "" {
 			if err := refreshAllSources(); err != nil {
-				log.Printf("[byteonabeach-shield] Refresh-all completed with issues: %v", err)
+				log.Printf("[shield] Refresh-all: %v", err)
 			}
 			return
 		}
 		if err := refreshOneSource(id); err != nil {
-			log.Printf("[byteonabeach-shield] Refresh source %s failed: %v", id, err)
+			log.Printf("[shield] Refresh source %s: %v", id, err)
 		}
 	}(req.ID)
 	writeJSON(w, map[string]string{"status": "refresh_started"})
-}
-
-func autoNameFromURL(raw string) string {
-	if raw == "" {
-		return "Unnamed Source"
-	}
-	if u, err := url.Parse(raw); err == nil {
-		host := u.Host
-		path := strings.Trim(u.Path, "/")
-		if path == "" {
-			return host
-		}
-		parts := strings.Split(path, "/")
-		last := parts[len(parts)-1]
-		if len(last) > 40 {
-			last = last[:40]
-		}
-		if host != "" {
-			return fmt.Sprintf("%s/%s", host, last)
-		}
-		return last
-	}
-	return raw
-}
-
-func decodeJSON(r *http.Request, dst any) error {
-	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(dst)
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 func refreshAllSources() error {
@@ -716,7 +719,7 @@ func refreshAllSources() error {
 	current = next
 	stateMu.Unlock()
 
-	log.Printf("[byteonabeach-shield] Refreshed %d sources, %d unique CIDRs/IPs", len(newSources), len(unique))
+	log.Printf("[shield] Refreshed %d sources, %d unique CIDRs", len(newSources), len(unique))
 	if len(issues) > 0 {
 		return errors.New(strings.Join(issues, "; "))
 	}
@@ -740,12 +743,29 @@ func refreshOneSource(id string) error {
 		}
 	}
 	if target == nil {
-		return fmt.Errorf("source %q not found", id)
+		return fmt.Errorf("source %q not found in config", id)
+	}
+
+	newSources := cloneSourceMap(old.sources)
+
+	if !target.Enabled {
+		// Source is disabled — just update config reference in state
+		if existing, ok := newSources[id]; ok && existing != nil {
+			clone := existing.clone()
+			clone.Config = *target
+			newSources[id] = clone
+		} else {
+			newSources[id] = &sourceState{Config: *target}
+		}
+		next := buildStoreFromSources(newSources)
+		stateMu.Lock()
+		current = next
+		stateMu.Unlock()
+		return nil
 	}
 
 	fetched, err := fetchSource(target.URL)
 	if err != nil {
-		newSources := cloneSourceMap(old.sources)
 		if prev := newSources[id]; prev != nil {
 			clone := prev.clone()
 			clone.Config = *target
@@ -761,7 +781,6 @@ func refreshOneSource(id string) error {
 		return err
 	}
 
-	newSources := cloneSourceMap(old.sources)
 	base := &sourceState{Config: *target}
 	if prev := old.sources[id]; prev != nil {
 		base.Hits.Store(prev.Hits.Load())
@@ -782,17 +801,15 @@ func refreshOneSource(id string) error {
 }
 
 func fetchSource(rawURL string) (*fetchedSource, error) {
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d from server", resp.StatusCode)
 	}
-
 	return parseSourceReader(resp.Body)
 }
 
@@ -805,21 +822,20 @@ func parseSourceReader(r io.Reader) (*fetchedSource, error) {
 		trie6: newIPTrie(128),
 	}
 	seen := make(map[string]struct{}, 65536)
+	loaded := 0
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "//") {
 			continue
 		}
-		if idx := strings.Index(line, "#"); idx >= 0 {
-			line = strings.TrimSpace(line[:idx])
-		}
-		if idx := strings.Index(line, ";"); idx >= 0 {
+		if idx := strings.IndexAny(line, "#;"); idx >= 0 {
 			line = strings.TrimSpace(line[:idx])
 		}
 		if line == "" {
 			continue
 		}
+		loaded++
 		prefix, err := parsePrefix(line)
 		if err != nil {
 			continue
@@ -839,7 +855,7 @@ func parseSourceReader(r io.Reader) (*fetchedSource, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	result.loadedEntries = len(result.prefixes)
+	result.loadedEntries = loaded
 	result.uniqueEntries = len(result.prefixes)
 	return result, nil
 }
@@ -847,7 +863,7 @@ func parseSourceReader(r io.Reader) (*fetchedSource, error) {
 func parsePrefix(line string) (netip.Prefix, error) {
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return netip.Prefix{}, errors.New("empty line")
+		return netip.Prefix{}, errors.New("empty")
 	}
 	if strings.Contains(line, "/") {
 		p, err := netip.ParsePrefix(line)
@@ -871,11 +887,10 @@ func buildStoreFromSources(sources map[string]*sourceState) *store {
 		sources = map[string]*sourceState{}
 	}
 	next := &store{
-		sources:     sources,
-		trie4:       newIPTrie(32),
-		trie6:       newIPTrie(128),
-		uniqueCount: 0,
-		lastBuild:   time.Now(),
+		sources:   sources,
+		trie4:     newIPTrie(32),
+		trie6:     newIPTrie(128),
+		lastBuild: time.Now(),
 	}
 	unique := make(map[string]struct{}, 110000)
 	for _, src := range sources {
@@ -960,21 +975,39 @@ func (s *sourceState) clone() *sourceState {
 	return out
 }
 
-func (s *sourceState) toSummary() sourceSummary {
-	if s == nil {
-		return sourceSummary{}
+func autoNameFromURL(raw string) string {
+	if raw == "" {
+		return "Unnamed Source"
 	}
-	return sourceSummary{
-		ID:            s.Config.ID,
-		Name:          s.Config.Name,
-		URL:           s.Config.URL,
-		Enabled:       s.Config.Enabled,
-		LoadedEntries: s.LoadedEntries,
-		UniqueEntries: s.UniqueEntries,
-		LastRefresh:   s.LastRefresh,
-		LastError:     s.LastError,
-		Hits:          s.Hits.Load(),
-		SupportsIPv4:  s.trie4 != nil && s.trie4.Count() > 0,
-		SupportsIPv6:  s.trie6 != nil && s.trie6.Count() > 0,
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
 	}
+	host := u.Host
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		return host
+	}
+	parts := strings.Split(path, "/")
+	last := parts[len(parts)-1]
+	if last == "" && len(parts) > 1 {
+		last = parts[len(parts)-2]
+	}
+	if len(last) > 48 {
+		last = last[:48]
+	}
+	if host != "" {
+		return fmt.Sprintf("%s — %s", host, last)
+	}
+	return last
+}
+
+func decodeJSON(r *http.Request, dst any) error {
+	defer r.Body.Close()
+	return json.NewDecoder(r.Body).Decode(dst)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
 }
